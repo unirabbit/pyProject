@@ -6,7 +6,6 @@ import numpy as np
 # 定义一个namedtuple,分别存放最近坐标点、最近距离和访问过的节点数
 result = namedtuple("Result_tuple", "nearest_point  nearest_dist  nodes_visited  node_type")
 
-
 # kd-tree每个结点中主要包含的数据结构如下
 class KdNode(object):
     def __init__(self, dom_elt, split, left, right, flag):
@@ -18,6 +17,9 @@ class KdNode(object):
 
 
 class KdTree(object):
+    def __hash__(self):
+        return hash(self[0])
+
     def __init__(self, data, label):
         k = len(data[0])  # 数据维度
 
@@ -52,12 +54,10 @@ def preorder(root):
 def find_nearest(tree, point, count=1):
     k = len(point)  # 数据维度
     knears = {}
-    global pointlist  # 存储排序后的k近邻点和对应距离
-
     def travel(kd_node, target):
         if kd_node is None:
-            return result([0] * k, float("inf"), 0, -1)  # python中用float("inf")和float("-inf")表示正负无穷
-
+            return
+        global pointlist  # 存储排序后的k近邻点和对应距离
         nodes_visited = 1
         s = kd_node.split  # 进行分割的维度
         pivot = kd_node.dom_elt  # 进行分割的“轴”
@@ -66,43 +66,76 @@ def find_nearest(tree, point, count=1):
             travel(kd_node.left, target)
         else:  # 目标离右子树更近
             travel(kd_node.right, target)
+        knears.setdefault(kd_node.dom_elt, temp_dist)
         if len(knears) < k:
-            knears.setdefault(tuple(kd_node), temp_dist)
+            knears.setdefault(kd_node, temp_dist)
             pointlist = sorted(knears.items(), key=lambda item: item[1], reverse=True)
         elif temp_dist <= pointlist[0][1]:
-            knears.setdefault(tuple(kd_node), temp_dist)
+            knears.setdefault(kd_node, temp_dist)
             pointlist = sorted(knears.items(), key=lambda item: item[1], reverse=True)
-        if kd_node.right != None or kd_node.left != None :
-
-    return pointlist
+        if kd_node.right is not None or kd_node.left is not None :
+            if target[s] <= pivot[s]:  # 如果目标点第s维小于分割轴的对应值(目标离左子树更近)
+                travel(kd_node.left, target)
+            else:  # 目标离右子树更近
+                travel(kd_node.right, target)
+        return knears
 
     return travel(tree.root, point)  # 从根节点开始递归
 
 
-# 搜索树：输出目标点的近邻点
-def traveltree(node, aim):
-    global pointlist  # 存储排序后的k近邻点和对应距离
-    if node == None: return
-    col = node.col
-    if aim[col] > node.value[col]:
-        traveltree(node.rb, aim)
-    if aim[col] < node.value[col]:
-        traveltree(node.lb, aim)
-    dis = dist(node.value, aim)
-    if len(knears) < k:
-        knears.setdefault(tuple(node.value.tolist()), dis)  # 列表不能作为字典的键
-        pointlist = sorted(knears.items(), key=lambda item: item[1], reverse=True)
-    elif dis <= pointlist[0][1]:
-        knears.setdefault(tuple(node.value.tolist()), dis)
-        pointlist = sorted(knears.items(), key=lambda item: item[1], reverse=True)
-    if node.rb != None or node.lb != None:
-        if abs(aim[node.col] - node.value[node.col]) < pointlist[0][1]:
-            if aim[node.col] < node.value[node.col]:
-                traveltree(node.rb, aim)
-            if aim[node.col] > node.value[node.col]:
-                traveltree(node.lb, aim)
-    return pointlist
+def find_nearest_old(tree, point, count=1):
+    k = len(point)  # 数据维度
+    near_list = np.ones(count)*float("inf")
 
+    def travel(kd_node, target, max_dist):
+        global pointlist
+        if kd_node is None:
+            return result([0] * k, float("inf"), 0, -1)  # python中用float("inf")和float("-inf")表示正负无穷
 
-def dist(x1, x2):  # 欧式距离的计算
-    return ((np.array(x1) - np.array(x2)) ** 2).sum() ** 0.5
+        nodes_visited = 1
+        s = kd_node.split  # 进行分割的维度
+        pivot = kd_node.dom_elt  # 进行分割的“轴”
+
+        if target[s] <= pivot[s]:  # 如果目标点第s维小于分割轴的对应值(目标离左子树更近)
+            nearer_node = kd_node.left  # 下一个访问节点为左子树根节点
+            further_node = kd_node.right  # 同时记录下右子树
+        else:  # 目标离右子树更近
+            nearer_node = kd_node.right  # 下一个访问节点为右子树根节点
+            further_node = kd_node.left
+
+        temp1 = travel(nearer_node, target, max_dist)  # 进行遍历找到包含目标点的区域
+
+        nearest = temp1.nearest_point  # 以此叶结点作为“当前最近点”
+        dist = temp1.nearest_dist  # 更新最近距离
+        nodes_type = temp1.node_type
+        nodes_visited += temp1.nodes_visited
+
+        if dist < max_dist:
+            max_dist = dist  # 最近点将在以目标点为球心，max_dist为半径的超球体内
+
+        temp_dist = abs(pivot[s] - target[s])  # 第s维上目标点与分割超平面的距离
+        if max_dist < temp_dist:  # 判断超球体是否与超平面相交
+            return result(nearest, dist, nodes_visited, nodes_type)  # 不相交则可以直接返回，不用继续判断
+
+        # ----------------------------------------------------------------------
+        # 计算目标点与分割点的欧氏距离
+        temp_dist = sqrt(sum((p1 - p2) ** 2 for p1, p2 in zip(pivot, target)))
+
+        if temp_dist < dist:  # 如果“更近”
+            nearest = pivot  # 更新最近点
+            dist = temp_dist  # 更新最近距离
+            max_dist = dist  # 更新超球体半径
+            nodes_type = kd_node.flag
+
+        # 检查另一个子结点对应的区域是否有更近的点
+        temp2 = travel(further_node, target, max_dist)
+
+        nodes_visited += temp2.nodes_visited
+        if temp2.nearest_dist < dist:  # 如果另一个子结点内存在更近距离
+            nearest = temp2.nearest_point  # 更新最近点
+            dist = temp2.nearest_dist  # 更新最近距离
+            nodes_type = temp2.node_type
+
+        return result(nearest, dist, nodes_visited, nodes_type)
+
+    return travel(tree.root, point, float("inf"))  # 从根节点开始递归

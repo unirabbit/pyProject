@@ -244,7 +244,7 @@ def datingClassTest():
     numTestVecs = int(m * hoRatio)
     print('numTestVecs=', numTestVecs)
     errorCount = 0
-    kd = kt.KdTree(datingDataMat.tolist(), datingLabels)
+    kd = kt.KdTree(normMat[numTestVecs:].tolist(), datingLabels)
     for i in range(numTestVecs):
         # 对数据测试
         res = kt.find_nearest(kd, normMat[i])
